@@ -8,7 +8,7 @@ This repository contains an assignment project. Follow the instructions below to
 ### 1. Clone the Repository
 To download the project to your local machine, run the following command:
 ```bash
-[git clone https://github.com/yourusername/repo.git](https://github.com/AmitOfeck/Patam_1_Project.git)
+[git clone https://github.com/yourusername/repo.git]
 ```
 
 ### 2. Navigate to the Assignment Directory

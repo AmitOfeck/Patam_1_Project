@@ -1,132 +1,133 @@
 package test;
 
+import test.RequestParser.RequestInfo;
 import java.io.*;
 import java.net.Socket;
 import java.net.ServerSocket;
-import java.util.Map;
 import java.util.concurrent.*;
-//import test.Servlets.Servlet;
+import java.util.Map;
 
 public class MyHTTPServer extends Thread implements HTTPServer {
 
-    private ConcurrentHashMap<String, Servlet> getRequestHandlers = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, Servlet> deleteRequestHandlers = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, Servlet> postRequestHandlers = new ConcurrentHashMap<>();
-    private ExecutorService requestProcessingPool;
-    private volatile boolean serverRunningFlag = false;
-    private ServerSocket mainServerSocket;
-    private final int maxThreadPoolSize;
+    private ConcurrentHashMap<String, Servlet> getHandlers = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, Servlet> postHandlers = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, Servlet> deleteHandlers = new ConcurrentHashMap<>();
+
+    private ExecutorService handlerPool;
+
+    private ServerSocket serverSocket;
+
+    private volatile boolean serverShutdown = false;
+
     private final int serverPort;
 
+    private final int poolSize;
 
-    public MyHTTPServer(int serverPort, int maxThreadPoolSize) {
-        this.requestProcessingPool = Executors.newFixedThreadPool(maxThreadPoolSize);
-        this.serverPort = serverPort;
-        this.maxThreadPoolSize = maxThreadPoolSize;
-        // System.out.println("HTTP Server initialized with port: " + serverPort + " and thread pool size: " + maxThreadPoolSize);
+    public MyHTTPServer(int port, int nThreads) {
+        handlerPool = Executors.newFixedThreadPool(nThreads);
+        this.serverPort = port;
+        this.poolSize = nThreads;
     }
 
-    public void addServlet(String httpMethod, String endpointUri, Servlet servletHandler) {
-        if (endpointUri == null || servletHandler == null) {
+    public void addServlet(String httpCommand, String uri, Servlet servlet) {
+        if (uri == null || servlet == null) {
             return;
         }
-        httpMethod = httpMethod.toUpperCase();
 
-        // System.out.println("Adding servlet for HTTP method: " + httpMethod + ", URI: " + endpointUri);
-        switch (httpMethod) {
+        httpCommand = httpCommand.toUpperCase();
+
+        switch (httpCommand) {
+            case "GET":
+                getHandlers.put(uri, servlet);
+                break;
             case "POST":
-                postRequestHandlers.put(endpointUri, servletHandler);
+                postHandlers.put(uri, servlet);
                 break;
             case "DELETE":
-                deleteRequestHandlers.put(endpointUri, servletHandler);
-                break;
-            case "GET":
-                getRequestHandlers.put(endpointUri, servletHandler);
+                deleteHandlers.put(uri, servlet);
                 break;
         }
     }
 
-    public void removeServlet(String httpMethod, String endpointUri) {
-        if (endpointUri == null) {
+    public void removeServlet(String httpCommand, String uri) {
+        if (uri == null) {
             return;
         }
-        httpMethod = httpMethod.toUpperCase();
-        // System.out.println("Removing servlet for HTTP method: " + httpMethod + ", URI: " + endpointUri);
-        switch (httpMethod) {
+
+        httpCommand = httpCommand.toUpperCase();
+
+        switch (httpCommand) {
+            case "GET":
+                getHandlers.remove(uri);
+                break;
             case "POST":
-                postRequestHandlers.remove(endpointUri);
+                postHandlers.remove(uri);
                 break;
             case "DELETE":
-                deleteRequestHandlers.remove(endpointUri);
-                break;
-            case "GET":
-                getRequestHandlers.remove(endpointUri);
+                deleteHandlers.remove(uri);
                 break;
         }
     }
 
     public void run() {
-        try (ServerSocket temporaryServerSocket = new ServerSocket(serverPort)) {
-            this.mainServerSocket = temporaryServerSocket;
-            mainServerSocket.setSoTimeout(1000);
+        try (ServerSocket socket = new ServerSocket(serverPort)) {
+            this.serverSocket = socket;
+            socket.setSoTimeout(1000);
 
-            // System.out.println("Server is running on port: " + serverPort);
-            while (!serverRunningFlag) {
+            while (!serverShutdown) {
                 try {
-                    Socket incomingClientSocket = mainServerSocket.accept();
+                    Socket clientSocket = socket.accept();
 
-                    // System.out.println("Accepted connection from client: " + incomingClientSocket.getRemoteSocketAddress());
-                    requestProcessingPool.submit(() -> {
+                    handlerPool.submit(() -> {
                         try {
-                            Thread.sleep(125); 
-                            BufferedReader clientRequestReader = createRequestBufferedReader(incomingClientSocket);
-                            RequestParser.RequestInfo parsedRequestInfo = RequestParser.parseRequest(clientRequestReader);
-                            ConcurrentHashMap<String, Servlet> relevantServletMap;
+                            Thread.sleep(125);
+                            BufferedReader requestReader = createBufferedReader(clientSocket);
 
-                            if (parsedRequestInfo != null) {
-                                // System.out.println("Processing request: " + parsedRequestInfo);
-                                switch (parsedRequestInfo.getHttpCommand()) {
+                            RequestInfo request = RequestParser.parseRequest(requestReader);
+                            ConcurrentHashMap<String, Servlet> servletMap;
+
+                            if (request != null) {
+                                switch (request.getHttpCommand()) {
+                                    case "GET":
+                                        servletMap = getHandlers;
+                                        break;
                                     case "POST":
-                                        relevantServletMap = postRequestHandlers;
+                                        servletMap = postHandlers;
                                         break;
                                     case "DELETE":
-                                        relevantServletMap = deleteRequestHandlers;
-                                        break;
-                                    case "GET":
-                                        relevantServletMap = getRequestHandlers;
+                                        servletMap = deleteHandlers;
                                         break;
                                     default:
-                                        throw new IllegalArgumentException("Unsupported HTTP method: " + parsedRequestInfo.getHttpCommand());
+                                        throw new IllegalArgumentException("Unsupported HTTP command: " + request.getHttpCommand());
                                 }
 
-                                Servlet selectedServlet = null;
-                                 String bestMatchingUri = "";
-                                for (Map.Entry<String, Servlet> servletEntry : relevantServletMap.entrySet()) {
-                                    if (parsedRequestInfo.getUri().startsWith(servletEntry.getKey()) && servletEntry.getKey().length() > bestMatchingUri.length()) {
-                                        bestMatchingUri = servletEntry.getKey();
-                                        selectedServlet = servletEntry.getValue();
+                                String longestMatchingUri = "";
+                                Servlet matchedServlet = null;
+                                for (Map.Entry<String, Servlet> entry : servletMap.entrySet()) {
+                                    if (request.getUri().startsWith(entry.getKey()) && entry.getKey().length() > longestMatchingUri.length()) {
+                                        longestMatchingUri = entry.getKey();
+                                        matchedServlet = entry.getValue();
                                     }
                                 }
 
-                                if (selectedServlet != null) {
-                                    // System.out.println("Handling request with servlet for URI: " + bestMatchingUri);
-                                    selectedServlet.handle(parsedRequestInfo, incomingClientSocket.getOutputStream());
+                                if (matchedServlet != null) {
+                                    matchedServlet.handle(request, clientSocket.getOutputStream());
                                 }
                             }
-                            clientRequestReader.close();
+
+                            requestReader.close();
                         } catch (IOException | InterruptedException e) {
                             e.printStackTrace();
                         } finally {
                             try {
-                                incomingClientSocket.close();
-                                // System.out.println("Closed connection with client.");
+                                clientSocket.close();
                             } catch (IOException e) {
                                 e.printStackTrace();
                             }
                         }
                     });
                 } catch (IOException e) {
-                    if (serverRunningFlag) {
+                    if (serverShutdown) {
                         break;
                     }
                 }
@@ -136,32 +137,21 @@ public class MyHTTPServer extends Thread implements HTTPServer {
         }
     }
 
-    private static BufferedReader createRequestBufferedReader(Socket clientSocket) throws IOException {
-        InputStream rawInputStream = clientSocket.getInputStream();
-        int availableDataBytes = rawInputStream.available();
-        byte[] temporaryBuffer = new byte[availableDataBytes];
-        int actualBytesRead = rawInputStream.read(temporaryBuffer, 0, availableDataBytes);
+    private static BufferedReader createBufferedReader(Socket clientSocket) throws IOException {
+        InputStream inputStream = clientSocket.getInputStream();
+        int availableBytes = inputStream.available();
+        byte[] buffer = new byte[availableBytes];
+        int bytesRead = inputStream.read(buffer, 0, availableBytes);
 
         return new BufferedReader(
                 new InputStreamReader(
-                        new ByteArrayInputStream(temporaryBuffer, 0, actualBytesRead)
+                        new ByteArrayInputStream(buffer, 0, bytesRead)
                 )
         );
     }
 
-    public void start() {
-        serverRunningFlag = false;
-        new Thread(() -> run()).start();
-        // System.out.println("Server thread started.");
-    }
-
     public void close() {
-        serverRunningFlag = true;
-        requestProcessingPool.shutdownNow();
-        // System.out.println("Server is shutting down...");
-    }
-
-    public Object getThreadPool() {
-        return requestProcessingPool;
+        serverShutdown = true;
+        handlerPool.shutdownNow();
     }
 }

@@ -8,58 +8,48 @@ import java.util.HashMap;
 public class RequestParser {
 
     public static RequestInfo parseRequest(BufferedReader reader) throws IOException {
-        RequestInfo requestInfo = null;
-        Scanner scanner = new Scanner(reader);
-
-        String firstLine = scanner.nextLine();
-        String uriPath = firstLine.split(" ")[1]; 
-        String method = firstLine.split(" ")[0]; 
-        //System.out.println("Method: " + method);
-        //System.out.println("URI Path: " + uriPath);
-
-        String buff = uriPath;
-        int length = buff.split("/").length;
-        String[] pathSegments = new String[length - 1];
-
-        for (int i = 1; i < length; i++) {
-            pathSegments[i - 1] = buff.split("/")[i];
-        }
-        pathSegments[length - 2] = pathSegments[length - 2].split("\\?")[0];
-
-        //System.out.println("Path Segments: ");
-        for (String segment : pathSegments) {
-            //System.out.println(segment);
-        }
-
-        String[] queryParams = uriPath.split("\\?").length > 1 ? uriPath.split("\\?")[1].split("&") : new String[0];
-        int queryLength = queryParams.length;
-        Map<String, String> parametersMap = new HashMap<>();
-
-        //System.out.println("Query Parameters: ");
-        for (int i = 0; i < queryLength; i++) {
-            String key = queryParams[i].split("=")[0];
-            String value = queryParams[i].split("=")[1];
-            parametersMap.put(key, value);
-            //System.out.println(key + "=" + value);
-        }
-
-        String line;
-        while (!scanner.nextLine().isEmpty()); 
-        while ((line = scanner.nextLine()) != null && !line.isEmpty()) {
-            String key = line.split("=")[0];
-            String value = line.split("=")[1];
-            parametersMap.put(key, value);
-            //System.out.println("Header: " + key + "=" + value);
-        }
-
-        byte[] contentBytes = null;
-        String contentLine = scanner.nextLine() + "\n";
-        contentBytes = contentLine.getBytes();
-
-        requestInfo = new RequestInfo(method, uriPath, pathSegments, parametersMap, contentBytes);
-        scanner.close();
-        return requestInfo;
+    RequestInfo requestInfo = null;
+    Scanner scanner = new Scanner(reader);
+    
+    String firstLine = scanner.nextLine();
+    String method = firstLine.split(" ")[0];
+    String url = firstLine.split(" ")[1];
+    
+    String[] urlParts = url.split("/");
+    int totalParts = urlParts.length;
+    String[] pathSegments = new String[totalParts - 1];
+    
+    for (int i = 1; i < totalParts; i++) {
+        pathSegments[i - 1] = urlParts[i];
     }
+    
+    pathSegments[totalParts - 2] = pathSegments[totalParts - 2].split("\\?")[0];
+    String[] queryParams = url.split("\\?")[1].split("&");
+    int queryParamCount = queryParams.length;
+    
+    Map<String, String> queryParamsMap = new HashMap<>();
+    for (int i = 0; i < queryParamCount; i++) {
+        String[] keyValue = queryParams[i].split("=");
+        queryParamsMap.put(keyValue[0], keyValue[1]);
+    }
+    
+    String headerLine;
+    while (!scanner.nextLine().isEmpty());
+    
+    while ((headerLine = scanner.nextLine()) != null && !headerLine.isEmpty()) {
+        String[] keyValue = headerLine.split("=");
+        queryParamsMap.put(keyValue[0], keyValue[1]);
+    }
+    
+    byte[] bodyBytes = null;
+    String bodyLine = scanner.nextLine() + "\n";
+    bodyBytes = bodyLine.getBytes();
+
+    requestInfo = new RequestInfo(method, url, pathSegments, queryParamsMap, bodyBytes);
+    scanner.close();
+    return requestInfo;
+}
+
 
     public static class RequestInfo {
         private final String httpCommand;
